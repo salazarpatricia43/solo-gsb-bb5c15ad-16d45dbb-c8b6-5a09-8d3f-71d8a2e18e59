@@ -551,3 +551,102 @@ body {
   color: var(--text);
 }
 .cue-counter { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ---------------- 现场标记：控制台面板 ---------------- */
+.marker-add {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.marker-add input {
+  flex: 1 1 280px;
+  min-width: 220px;
+  padding: 10px 12px;
+  font-size: 15px;
+  border-radius: 8px;
+  border: 1px solid #33405f;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.btn-danger-ghost {
+  background: rgba(255, 68, 68, .08);
+  border-color: rgba(255, 68, 68, .4);
+  color: #ff7676;
+}
+.marker-quick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+}
+.marker-quick-btn { background: var(--panel-2); color: #aebbd4; }
+.marker-counter, .marker-total {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.marker-total { margin-left: auto; }
+.marker-error-dismiss {
+  appearance: none;
+  margin-left: 10px;
+  border: 1px solid rgba(255, 68, 68, .5);
+  background: transparent;
+  color: #ff9b9b;
+  border-radius: 6px;
+  padding: 1px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.marker-timeline {
+  list-style: none;
+  margin: 12px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.marker-row {
+  display: grid;
+  grid-template-columns: 132px minmax(120px, 1.2fr) minmax(120px, 1fr) minmax(180px, 1.2fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+}
+.marker-row:first-child { border-left-color: var(--green); }
+.marker-time { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.marker-time b { font-size: 15px; color: var(--text); }
+.marker-offset { color: var(--muted); font-size: 11px; font-style: normal; }
+.marker-name {
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marker-item { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.marker-item-tag {
+  color: #aebbd4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marker-item-none { color: var(--muted); font-size: 12px; }
+.marker-tag-gone { color: var(--amber); border-color: rgba(255, 176, 32, .6); background: rgba(255, 176, 32, .12); }
+.marker-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.marker-meta em { font-style: normal; font-size: 12px; font-variant-numeric: tabular-nums; }
+.marker-phase { color: var(--accent); }
+.marker-remaining { color: var(--muted); }
+.marker-meta .dev-early { color: var(--green); }
+.marker-meta .dev-late { color: var(--red); }
+.marker-meta .dev-ok { color: var(--muted); }
+

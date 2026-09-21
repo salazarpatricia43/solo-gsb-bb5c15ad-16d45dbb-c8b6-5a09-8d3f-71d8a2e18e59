@@ -102,6 +102,20 @@ const SCREEN_ID_RE = /^s-[0-9a-zA-Z-]{8,64}$/;
 let cueSeq = 0;
 const screens = new Map(); // screenId -> { id, name, online, ws, client, cue }
 
+// ---------------------------------------------------------------------------
+// 现场标记（live markers）
+// 持有者可在当前环节记录带名称的事件（如发言切换、设备故障）。服务端以单调时钟
+// 保存发生时刻，并冻结记录当下的环节归属与相对计划偏差：之后暂停、重连、进入
+// 下一环节甚至整体替换议程，历史标记的顺序与归属都保持不变。
+// 标记仅随独立通道下发给控制台（非投屏连接），投屏在协议层即收不到标记数据。
+// 与提示一样只存内存：服务进程重启即视为一场新会话。
+// ---------------------------------------------------------------------------
+const MAX_MARKER_NAME_LEN = 30;
+const MAX_MARKERS = 500;
+
+const markers = []; // { seq, id, name, monoMs, wallMs, phase, remainingMs, itemId, itemName, deviationMs }
+let markerSeq = 0;
+
 const defaultScreenName = (id) => `投屏 ${String(id).slice(2, 8).toUpperCase()}`;
 
 function cleanScreenName(raw, fallback) {
@@ -247,6 +261,84 @@ function sendCueCommand(client, msg) {
     deliverCue(rec);
   }
   broadcastScreens();
+}
+
+// ---------------------------------------------------------------------------
+// 现场标记指令
+// ---------------------------------------------------------------------------
+function sendMarkers(ws) {
+  send(ws, { type: 'markers', epoch, markers: markers.map(publicMarker) });
+}
+
+function publicMarker(m) {
+  return {
+    seq: m.seq,
+    id: m.id,
+    name: m.name,
+    monoMs: m.monoMs,
+    wallMs: m.wallMs,
+    phase: m.phase,
+    remainingMs: m.remainingMs,
+    itemId: m.itemId,
+    itemName: m.itemName,
+    deviationMs: m.deviationMs,
+  };
+}
+
+// 标记只下发给控制台：已注册为投屏的连接（client.screenId）不在分发范围。
+// 这样投屏在协议层即收不到任何标记数据，无须依赖客户端“不渲染”。
+function broadcastMarkers() {
+  const msg = { type: 'markers', epoch, markers: markers.map(publicMarker) };
+  for (const c of clients) {
+    if (!c.screenId) send(c.ws, msg);
+  }
+}
+
+// 当前环节相对计划偏差（与快照同源）：预计结束点 - (预计开始点 + 采用时长)
+// 在记录标记的瞬间计算并冻结，后续推进/暂停/换环节都不回改历史标记。
+function currentDeviationMs(elapsedMs) {
+  const cur = currentItem();
+  if (!cur) return 0;
+  const projected = projectAgenda(agenda.items, {
+    currentId: agenda.currentId,
+    devInMs: agenda.devInMs,
+    virtElapsedMs: elapsedMs,
+    liveDurationMs: timer.durationMs,
+    overdue: timer.phase === 'finished',
+  });
+  const row = projected.find((r) => r.id === agenda.currentId) ?? null;
+  return row ? row.projEndMs - (row.projStartMs + row.effDurationMs) : 0;
+}
+
+function addMarker(rawName) {
+  if (markers.length >= MAX_MARKERS) {
+    return { error: 'MARKERS_FULL', message: `本场标记已达上限 ${MAX_MARKERS} 条` };
+  }
+  const name = String(rawName ?? '').trim();
+  if (!name || name.length > MAX_MARKER_NAME_LEN) {
+    return { error: 'BAD_MARKER', message: `标记名称需为 1~${MAX_MARKER_NAME_LEN} 字` };
+  }
+  const elapsedMs = virtElapsedMs();
+  const cur = currentItem();
+  const m = {
+    seq: ++markerSeq,
+    id: `m-${Math.random().toString(36).slice(2, 10)}`,
+    name: name.slice(0, MAX_MARKER_NAME_LEN),
+    monoMs: nowMono(),          // 单调时钟：唯一排序依据，不受系统时钟回拨影响
+    wallMs: Date.now(),         // 日历时刻：仅供控制台时间线与 CSV 展示
+    phase: timer.phase,
+    remainingMs: remainingNow(),
+    itemId: cur ? cur.id : null,
+    itemName: cur ? cur.name : null, // 冻结归属：议程改名/替换后历史标记仍显示原环节
+    deviationMs: currentDeviationMs(elapsedMs),
+  };
+  markers.push(m);
+  return { ok: true, marker: publicMarker(m) };
+}
+
+function removeLastMarker() {
+  const m = markers.pop();
+  return { ok: true, removedSeq: m ? m.seq : null };
 }
 
 function remainingNow() {
@@ -482,6 +574,7 @@ function handleCommand(client, msg) {
           client.lastDenyAtMono = nowMono();
         }
         send(client.ws, denied);
+        sendMarkers(client.ws); // 等待接管的控制台也先拿到本场标记时间线
         return;
       }
       holder = {
@@ -490,6 +583,7 @@ function handleCommand(client, msg) {
         lastHeartbeatMono: nowMono(),
       };
       send(client.ws, { type: 'control', granted: true, clientId: client.id, targetId: client.id });
+      sendMarkers(client.ws); // 控制台（重连）申请成功即补发本场全部标记
       broadcastSnapshot();
       return;
     }
@@ -642,6 +736,24 @@ function handleCommand(client, msg) {
     case 'cue_send': {
       // 控制台向一块/多块/全部在线投屏发送提示（仅持有者）
       sendCueCommand(client, msg);
+      return;
+    }
+
+    case 'marker_add': {
+      // 记录一条现场标记：单调时刻、当前环节与相对计划偏差当场冻结
+      const r = addMarker(msg.name);
+      if (r.error) {
+        fail(client, r.error, r.message);
+        return;
+      }
+      broadcastMarkers();
+      return;
+    }
+
+    case 'marker_remove_last': {
+      // 删除最近一条标记：seq 不回收，历史顺序保持可追溯
+      removeLastMarker();
+      broadcastMarkers();
       return;
     }
 

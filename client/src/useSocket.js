@@ -15,6 +15,7 @@ const RETRY_MAX_MS = 5000;
 export function useSocket({ role, screenRef }) {
   const [snap, setSnap] = useState(null);
   const [screens, setScreens] = useState([]);          // 控制台：所有投屏及最新提示状态
+  const [markers, setMarkers] = useState([]);          // 控制台：本场现场标记时间线
   const [cue, setCue] = useState(null);                // 投屏：当前上屏的提示
   const [screenConflict, setScreenConflict] = useState(false); // 投屏：同一 ID 被新连接顶替
   const [connState, setConnState] = useState('connecting'); // connecting | open | reconnecting
@@ -111,6 +112,7 @@ export function useSocket({ role, screenRef }) {
           baselineRef.current = { currentEpoch: msg.epoch, currentVersion: 0 };
           cueBaselineRef.current = { currentEpoch: msg.epoch, cueSeq: 0 };
           reportedCueRef.current = 0;
+          if (role === 'console') setMarkers([]); // 服务重启即新会话，旧标记清空
           return;
         }
 
@@ -135,6 +137,15 @@ export function useSocket({ role, screenRef }) {
         if (msg.type === 'screens') {
           // 屏幕名单（含每屏最新提示与状态）由服务端权威整体替换
           setScreens(Array.isArray(msg.screens) ? msg.screens : []);
+          return;
+        }
+
+        if (msg.type === 'markers') {
+          // 现场标记名单由服务端权威整体替换；旧纪元（服务重启前）残留一律丢弃。
+          // 投屏在服务端即收不到该消息，此处再按角色兜底。
+          if (role !== 'console') return;
+          if (baselineRef.current.currentEpoch && msg.epoch !== baselineRef.current.currentEpoch) return;
+          setMarkers(Array.isArray(msg.markers) ? msg.markers : []);
           return;
         }
 
@@ -230,6 +241,7 @@ export function useSocket({ role, screenRef }) {
   return {
     snap,
     screens,
+    markers,
     cue,
     screenConflict,
     connState,

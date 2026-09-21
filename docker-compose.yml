@@ -4,11 +4,13 @@ services:
     image: venue-countdown:latest
     container_name: venue-countdown
     ports:
-      - "3000:3000"
+      # 宿主机端口可用 HOST_PORT 覆盖（如 HOST_PORT=8080 docker compose up）；
+      # 容器内始终监听 3000，可用 PORT 改变容器内监听端口（需同步调整右侧映射）。
+      - "${HOST_PORT:-3000}:${PORT:-3000}"
     restart: unless-stopped
     healthcheck:
       # 客户端未构建时服务端返回 502，构建后返回 200
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:${PORT:-3000}/"]
       interval: 15s
       timeout: 5s
       retries: 5
