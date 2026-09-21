@@ -551,3 +551,92 @@ body {
   color: var(--text);
 }
 .cue-counter { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ---------------- 现场标记（控制台） ---------------- */
+.marker-add {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 10px 0 8px;
+}
+.marker-add input {
+  flex: 1 1 240px;
+  min-width: 200px;
+  padding: 10px 12px;
+  font-size: 15px;
+  border-radius: 8px;
+  border: 1px solid #33405f;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.marker-presets { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.marker-preset { background: rgba(79, 140, 255, .1); border-color: rgba(79, 140, 255, .4); color: #9db9ff; }
+.marker-counter { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.marker-timeline {
+  list-style: none;
+  margin: 12px 0 8px;
+  padding: 0 0 0 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.marker-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 86px 92px minmax(110px, 1.2fr) minmax(180px, 1.6fr) 72px 64px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 10px 9px 22px;
+  border-left: 2px solid #33405f;
+}
+.marker-item::before { content: none; }
+.marker-dot {
+  position: absolute;
+  left: -5px;
+  top: 15px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(79, 140, 255, .6);
+}
+.marker-item:nth-child(odd) { background: rgba(29, 38, 59, .5); }
+.marker-time { font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 700; }
+.marker-session { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+.marker-name { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.marker-item-name {
+  font-size: 13px;
+  color: #aebbd4;
+  font-style: normal;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.marker-item-idx, .marker-elapsed {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid #33405f;
+  border-radius: 999px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+.marker-dev { font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; }
+.marker-phase {
+  font-style: normal;
+  font-size: 11px;
+  text-align: center;
+  border: 1px solid #33405f;
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--muted);
+  white-space: nowrap;
+  justify-self: start;
+}
+.marker-phase-running { color: var(--green); border-color: rgba(46, 204, 113, .45); }
+.marker-phase-paused { color: var(--amber); border-color: rgba(255, 176, 32, .45); }
+.marker-phase-finished { color: var(--red); border-color: rgba(255, 68, 68, .5); }

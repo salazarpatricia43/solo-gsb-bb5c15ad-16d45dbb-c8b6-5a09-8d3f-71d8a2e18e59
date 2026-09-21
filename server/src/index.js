@@ -87,6 +87,25 @@ let version = 0;        // 单调递增版本号，永不在运行期内归零
 const epoch = epochId(); // 服务进程纪元：客户端用它识别“服务端已重启”
 
 // ---------------------------------------------------------------------------
+// 现场标记（marker）
+// 持有者可在当前环节记录带名称的现场事件（发言切换、设备故障……）。
+// 每条标记在产生瞬间固化：单调时钟发生时刻、归属环节（id/名称/序号快照）、
+// 本环节已用时长与相对计划偏差；暂停 / 重连 / 进入下一环节 / 改写议程都不改变
+// 历史标记的顺序与归属。列表仅存服务端内存（与后台提示同级），随服务进程开始
+// 形成“本场会话”，进程重启即清空并换新 session id。
+// 标记消息只推送给控制台类连接（未注册为投屏的连接），投屏永远不显示标记。
+// ---------------------------------------------------------------------------
+const MAX_MARK_NAME_LEN = 30;
+const MAX_MARKS = 1000;
+
+let markerSeq = 0; // 本场会话内严格递增，只增不归零
+const session = {
+  id: `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  startedMono: nowMono(), // 会话起点的单调时刻：会话内相对时间同样不受挂钟调整影响
+};
+const markers = [];
+
+// ---------------------------------------------------------------------------
 // 后台提示（cue）
 // 每块投屏首次打开自行生成持久屏幕 ID（localStorage），每次连接用它注册。
 // 服务端内存保存每屏最新一条提示与状态，不引入任何第三方服务/持久化：
@@ -256,9 +275,9 @@ function remainingNow() {
   return timer.remainingMs;
 }
 
-// warning（60 秒内）与 finished 是快照派生状态，进入临界值由 tick 驱动发播
-function buildSnapshot() {
-  const remainingMs = remainingNow();
+// 当前议程推演视图：projectAgenda 结果 + 当前环节实时偏差。
+// 快照与现场标记在产生瞬间共用同一份权威计算，保证两边偏差口径一致。
+function agendaView() {
   const cur = currentItem();
   const elapsedMs = virtElapsedMs();
   const projected = projectAgenda(agenda.items, {
@@ -271,6 +290,13 @@ function buildSnapshot() {
   // 当前环节实时偏差 = 预计结束点 - (实际开始点 + 当前采用的总时长)，提前为负、超时为正
   const curRow = projected.find((r) => r.id === agenda.currentId) ?? null;
   const deviationMs = curRow ? curRow.projEndMs - (curRow.projStartMs + curRow.effDurationMs) : 0;
+  return { cur: curRow, elapsedMs, projected, deviationMs };
+}
+
+// warning（60 秒内）与 finished 是快照派生状态，进入临界值由 tick 驱动发播
+function buildSnapshot() {
+  const remainingMs = remainingNow();
+  const view = agendaView();
 
   return {
     type: 'snapshot',
@@ -287,9 +313,9 @@ function buildSnapshot() {
     agenda: {
       seq: agenda.seq,
       currentId: agenda.currentId,
-      elapsedMs,
-      deviationMs,
-      items: projected,
+      elapsedMs: view.elapsedMs,
+      deviationMs: view.deviationMs,
+      items: view.projected,
     },
   };
 }
@@ -312,6 +338,79 @@ function releaseHolder(reason) {
   holder = null;
   send(h.ws, { type: 'control', granted: false, reason, targetId: h.id });
   broadcastSnapshot(); // locked 状态变化需要立刻通知所有投屏
+}
+
+// ---------------------------------------------------------------------------
+// 现场标记指令
+// ---------------------------------------------------------------------------
+function publicMarker(m) {
+  return {
+    seq: m.seq,
+    name: m.name,
+    wallTime: m.wallTime,           // ISO8601 挂钟时间（仅供人读/导出）
+    sessionElapsedMs: m.sessionElapsedMs, // 相对本场会话起点（单调时钟）
+    phase: m.phase,
+    itemId: m.itemId,               // 归属环节快照：即便之后议程被改写也保持不变
+    itemName: m.itemName,
+    itemIndex: m.itemIndex,
+    itemElapsedMs: m.itemElapsedMs, // 记录瞬间当前环节已用时长（单调时钟度量，暂停冻结）
+    deviationMs: m.deviationMs,     // 记录瞬间相对计划偏差：进环节顺延量 + 本环节超时量
+  };
+}
+
+function markersPayload() {
+  return { type: 'markers', epoch, sessionId: session.id, markers: markers.map(publicMarker) };
+}
+
+// 投屏连接（已注册屏幕身份）不接收任何标记消息，确保投屏永不显示标记
+function broadcastMarkers() {
+  const msg = markersPayload();
+  for (const c of clients) {
+    if (!c.screenId) send(c.ws, msg);
+  }
+}
+
+// 新增一条现场标记：归属与偏差在产生瞬间固化，之后不再随计时/议程变化
+function addMarker(rawName) {
+  const name = String(rawName ?? '').trim();
+  if (!name || name.length > MAX_MARK_NAME_LEN) {
+    return { error: 'BAD_MARK', message: `标记名称需为 1~${MAX_MARK_NAME_LEN} 字` };
+  }
+  if (markers.length >= MAX_MARKS) {
+    return { error: 'MARK_LIMIT', message: `本场会话最多记录 ${MAX_MARKS} 条标记` };
+  }
+
+  const view = agendaView();
+  const cur = view.cur;
+  const idx = cur ? agenda.items.findIndex((x) => x.id === cur.id) : -1;
+  const atMono = nowMono();
+  // 相对计划偏差 = 当前环节实际开始点相对计划开始点的顺延量（固定环节恒为 0）
+  //   + 本环节已经超出预计总时长的超时量（归零后继续累积，暂停冻结）。
+  // 与控制台顶部展示的偏差口径一致：提前结束尚未发生时顺延为 0，运行中显示“准时”。
+  const startOffset = cur ? (cur.fixed ? 0 : agenda.devInMs) : 0;
+  const overdue = cur ? Math.max(0, view.elapsedMs - timer.durationMs) : 0;
+
+  const m = {
+    seq: ++markerSeq,
+    name: name.slice(0, MAX_MARK_NAME_LEN),
+    wallTime: new Date().toISOString(),
+    sessionElapsedMs: Math.max(0, atMono - session.startedMono), // 单调时钟：不受挂钟回拨影响
+    phase: timer.phase,
+    itemId: cur ? cur.id : null,
+    itemName: cur ? cur.name : null,
+    itemIndex: idx >= 0 ? idx : null,
+    itemElapsedMs: cur ? view.elapsedMs : null,
+    deviationMs: startOffset + overdue,
+  };
+  markers.push(m);
+  return { ok: true, marker: publicMarker(m) };
+}
+
+// 删除最近一条（seq 最大）；仅持有者可调用，空列表返回 NO_MARK
+function deleteLatestMarker() {
+  const m = markers.pop();
+  if (!m) return { error: 'NO_MARK', message: '暂无现场标记可删除' };
+  return { ok: true, seq: m.seq };
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +714,28 @@ function handleCommand(client, msg) {
       return;
     }
 
+    case 'mark_add': {
+      // 现场标记：记录瞬间固化归属环节与偏差（运行/暂停/超时/待开始均可记录）
+      const r = addMarker(msg.name);
+      if (r.error) {
+        fail(client, r.error, r.message);
+        return;
+      }
+      broadcastMarkers();
+      return;
+    }
+
+    case 'mark_delete_latest': {
+      // 删除本场会话最近一条标记
+      const r = deleteLatestMarker();
+      if (r.error) {
+        fail(client, r.error, r.message);
+        return;
+      }
+      broadcastMarkers();
+      return;
+    }
+
     case 'screen_register': {
       // 投屏注册（每次连接/重连均调用）：携带持久屏幕 ID 与显示名
       registerScreen(client, msg.screenId, msg.name);
@@ -712,6 +833,8 @@ wss.on('connection', (ws) => {
   send(ws, { type: 'hello', clientId: client.id, epoch });
   send(ws, buildSnapshot());
   send(ws, { type: 'screens', epoch, screens: [...screens.values()].map(publicScreen) });
+  // 现场标记随首包一并下发（此刻尚未注册为投屏）；投屏注册后不再收到标记更新
+  send(ws, markersPayload());
 });
 
 setInterval(tick, TICK_MS).unref();

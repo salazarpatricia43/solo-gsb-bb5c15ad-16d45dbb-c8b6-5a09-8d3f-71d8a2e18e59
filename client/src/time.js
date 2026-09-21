@@ -69,6 +69,52 @@ export function formatDeviation(ms) {
   return `${sign}${min}分`;
 }
 
+// 偏差（毫秒）格式化为带符号的秒数（用于 CSV 导出，机器可读）
+export function formatDeviationSeconds(ms) {
+  if (Math.abs(ms) < 500) return '0';
+  return String(Math.round(ms / 1000));
+}
+
+// 会话内相对时间（毫秒）格式化为 H:MM:SS
+export function formatSessionClock(ms) {
+  if (ms == null || !Number.isFinite(ms)) return '--:--:--';
+  const totalSec = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${h}:${pad2(m)}:${pad2(s)}`;
+}
+
+// ISO8601 挂钟时间格式化为本地 HH:MM:SS（标记时间线展示）
+export function formatWallTime(iso) {
+  if (!iso) return '--:--:--';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '--:--:--';
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+// ISO8601 挂钟时间格式化为本地 YYYY-MM-DD HH:MM:SS（CSV 导出）
+export function formatWallDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} `
+    + `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+// 已用时长（毫秒）格式化为 M:SS
+export function formatElapsed(ms) {
+  if (ms == null || !Number.isFinite(ms)) return '--:--';
+  const totalSec = Math.floor(Math.max(0, ms) / 1000);
+  return `${Math.floor(totalSec / 60)}:${pad2(totalSec % 60)}`;
+}
+
+// CSV 字段转义：含逗号、引号或换行时用双引号包裹并把内部引号翻倍
+export function csvCell(value) {
+  const s = String(value ?? '');
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 // 在两份服务端快照之间对议程预计结束点做本地外推（和 liveRemaining 同理）：
 // 仅“已超时（finished）”后预计结束点随实际走时持续后移；运行中假设按时结束，
 // 预计结束点不变（偏差在手动结束/归零的那一刻固化）。权威结果永远以服务端快照为准。

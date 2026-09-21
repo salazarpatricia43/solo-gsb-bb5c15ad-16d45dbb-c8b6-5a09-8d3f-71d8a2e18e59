@@ -15,6 +15,8 @@ const RETRY_MAX_MS = 5000;
 export function useSocket({ role, screenRef }) {
   const [snap, setSnap] = useState(null);
   const [screens, setScreens] = useState([]);          // 控制台：所有投屏及最新提示状态
+  const [markers, setMarkers] = useState([]);          // 控制台：本场会话现场标记（投屏收不到更新）
+  const [markerMeta, setMarkerMeta] = useState(null);  // { sessionId } 本场会话信息
   const [cue, setCue] = useState(null);                // 投屏：当前上屏的提示
   const [screenConflict, setScreenConflict] = useState(false); // 投屏：同一 ID 被新连接顶替
   const [connState, setConnState] = useState('connecting'); // connecting | open | reconnecting
@@ -138,6 +140,16 @@ export function useSocket({ role, screenRef }) {
           return;
         }
 
+        if (msg.type === 'markers') {
+          // 现场标记由服务端权威整体替换；旧纪元（重启前）残留消息丢弃，列表不回滚
+          if (baselineRef.current.currentEpoch !== null && msg.epoch !== baselineRef.current.currentEpoch) {
+            return;
+          }
+          setMarkerMeta({ sessionId: msg.sessionId });
+          setMarkers(Array.isArray(msg.markers) ? msg.markers : []);
+          return;
+        }
+
         if (msg.type === 'cue' && role === 'display') {
           // 提示守卫：旧纪元 / 更小 cueSeq 的迟到消息一律丢弃；
           // cueSeq 相等为重连同一条补发（幂等），更大为新提示（覆盖）。
@@ -230,6 +242,8 @@ export function useSocket({ role, screenRef }) {
   return {
     snap,
     screens,
+    markers,
+    markerMeta,
     cue,
     screenConflict,
     connState,

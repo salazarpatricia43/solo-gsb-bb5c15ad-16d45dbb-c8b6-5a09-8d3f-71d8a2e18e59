@@ -5,13 +5,15 @@
 当前环节**提前结束或超时**后自动推演后续偏差，多块大屏打开**投屏页**实时联播倒计时、
 当前/下一环节及其预计开始时间；进入 60 秒与归零时切换醒目状态。控制台还可向**一块、多块
 或全部在线投屏**全屏推送“请上场／加快／结束”或不超过 30 字的自定义提示，按屏幕实时查看
-未送达 / 已显示 / 已确认。
+未送达 / 已显示 / 已确认。控制台还提供**现场标记**：持有控制权时在当前环节记录带名称的
+事件（发言切换、设备故障等），服务端以单调时钟固化发生时刻、归属环节与相对计划偏差，
+按时间线展示、可删除最近一条并按本场会话导出 CSV（投屏不显示任何标记）。
 
 - **后端**：Node.js 原生 HTTP + [`ws`](https://github.com/websockets/ws) WebSocket
 - **前端**：React 18 + Vite（控制台 `/console`、投屏 `/display`）
 - **部署**：单容器单端口（静态文件与 WebSocket 同端口），Docker / Compose 一键启动
 
-## 快速开始（单条命令：安装依赖并启动）
+## 快速开始（单条命令：构建镜像并启动）
 
 需要 Docker 与 Docker Compose v2：
 
@@ -19,7 +21,7 @@
 docker compose up --build
 ```
 
-启动后访问（容器对外端口 **3000**，可用 `PORT` 环境变量修改）：
+启动后访问（容器对外端口 **3000**）：
 
 | 页面 | 地址 | 说明 |
 | --- | --- | --- |
@@ -27,7 +29,39 @@ docker compose up --build
 | 控制台 | <http://localhost:3000/console> | 维护议程、设定当前环节、开始/暂停/继续/结束本环节（同一时刻仅一个可操作） |
 | 投屏页 | <http://localhost:3000/display> | 大屏展示当前环节、下一环节及其预计开始时间，可在任意多块屏幕同时打开 |
 
-典型操作入口（控制台页内）：
+### Docker / Compose 启动说明
+
+**方式一：Docker Compose（推荐，仓库已带 `docker-compose.yml`）**
+
+```bash
+docker compose up --build        # 前台启动（看日志，Ctrl+C 停止容器）
+docker compose up --build -d     # 后台启动
+docker compose logs -f           # 跟踪后台容器日志
+docker compose down              # 停止并移除容器
+docker compose restart venue-countdown   # 重启（内存中的提示/标记随之清空）
+```
+
+修改宿主机映射端口（容器内始终监听 3000）：
+
+```bash
+PORT=8080 docker compose up --build      # 之后访问 http://localhost:8080
+# 或持久化：在仓库根目录创建 .env，写入一行  PORT=8080
+```
+
+**方式二：直接用 Docker（不依赖 Compose）**
+
+```bash
+docker build -t venue-countdown .
+docker run --rm -p 3000:3000 --name venue-countdown venue-countdown
+# 后台运行加 -d；换宿主机端口：-p 8080:3000；查看日志：docker logs -f venue-countdown
+```
+
+> 计时锚点、后台提示与现场标记均只保存在服务进程内存中，不挂卷、无外部依赖；
+> 容器 / 服务重启即恢复初始议程，未确认提示与本场标记清空（投屏屏幕 ID 在浏览器本地保留）。
+
+也可不使用 Docker，直接使用根目录 npm 脚本（等价于 Compose）：`npm run up`、`npm run up:detached`、`npm run down`。
+
+### 典型操作入口（控制台页内）
 
 1. 在 **议程偏差推演** 面板逐行维护有序环节：名称、计划开始（`HH:MM`）、时长（分钟）、
    勾选 📌 表示**固定环节**；可用 ↑↓ 排序、增删行，完成后点 **保存议程并同步投屏**。
@@ -51,14 +85,24 @@ docker compose up --build
 > 提示状态保存在服务端内存中（不引入数据库或第三方服务）：服务进程重启后未确认提示会清空，
 > 但投屏的屏幕 ID 与显示名在浏览器本地保留，重开后自动重新注册。
 
+### 现场标记（marker）
+
+1. 在控制台 **现场标记** 面板输入名称（不超过 **30 字**，如“发言切换”“设备故障”）后回车，
+   或点 **发言切换 / 设备故障 / 提示上场 / 现场干扰** 预设一键记录；运行、暂停、超时、
+   待开始等任意计时状态下均可记录。
+2. 每条标记在**记录瞬间**由服务端固化：单调时钟发生时刻（含会话内相对时间 `T+` 与本地挂钟时间）、
+   **归属环节**（名称/序号快照）、记录时该环节已用时长、计时状态与**相对计划偏差**
+   （进入当前环节时的顺延量 + 本环节超时累积，固定环节顺延量恒为 0）。
+3. 面板按 **seq 升序时间线** 展示本场全部标记；可 **删除最近一条**
+   （仅删 seq 最大者，可连续撤销），或点 **导出 CSV** 下载本场会话全部标记
+   （UTF-8 BOM，Excel 直接打开中文不乱码，列：序号/发生时刻/会话内时间/环节序号/环节名称/环节已用秒数/相对计划偏差秒数/计时状态/标记名称）。
+4. **投屏不显示标记**：标记消息只推送给控制台类连接，投屏注册后不接收任何标记更新。
+5. 暂停计时、断线重连、进入下一环节或整体改写议程，**历史标记的顺序与归属均保持不变**
+   （旧标记仍挂在记录时的环节名下）。标记仅持有者可新增 / 删除；导出无需控制权。
+6. “本场会话”= 一个服务进程生命周期：服务 / 容器重启即清空并开始新会话（带新的 `sessionId`）；
+   数据只存服务端内存，不引入数据库或文件。
+
 投屏页建议按 **F11** 全屏。另起一台电脑/平板做控制台时，把 `localhost` 换成本机局域网 IP 即可。
-
-后台运行与停止：
-
-```bash
-docker compose up --build -d   # 后台
-docker compose down            # 停止
-```
 
 ## 本地开发（不用 Docker）
 
@@ -103,6 +147,14 @@ npm install && npm run build && npm start
     非目标屏收不到、也不能代为确认；
   - 离线（或断线重连中）的目标屏，其未确认最新提示在重新注册后**自动补发**；
     状态只存服务端内存，无任何第三方服务。
+- **现场标记**：
+  - 持有者在任意计时状态记录 ≤30 字的命名事件（预设一键记录或自定义）；
+  - 服务端在记录瞬间以单调时钟固化发生时刻（挂钟时间 + 会话内 `T+`）、归属环节（id/名称/序号快照）、
+    该环节已用时长、计时状态与相对计划偏差（顺延量 + 本环节超时量）；
+  - 控制台按 seq 时间线展示，支持删除最近一条与按本场会话导出 CSV（含 UTF-8 BOM）；
+  - 标记消息仅推送给控制台类连接，**投屏永不显示**；
+  - 暂停、重连、进入下一环节、改写议程都不改变历史标记的顺序与归属；
+    仅存服务端内存，服务 / 容器重启即开启新会话（新 `sessionId`）。
 
 ## 设计要点（对应可靠性要求）
 
@@ -129,6 +181,12 @@ npm install && npm run build && npm start
    每屏内存只保存**最新一条**提示及其三态（未送达→已显示→已确认），
    投屏注册/重连时若最新提示未确认则单播补发；确认只接受“该屏当前连接、且 seq 等于最新提示”，
    从机制上杜绝替别人确认与旧确认回滚。
+7. **现场标记只增快照、事后不可变**：标记不是计时状态，不进入 200ms 周期快照；
+   新增 / 删除时才单独下发整体替换的 `markers` 消息（带 epoch 守卫）。每条标记的归属与偏差
+   在产生瞬间用当时的 `projectAgenda` 视图固化为普通数据快照，因此暂停、重连、`advance`
+   甚至整体改写议程都不会回写历史标记。发生时刻同时记录单调时钟（会话内 `T+`，不受挂钟回拨影响）
+   与 ISO 挂钟时间（供人读与导出）。消息按连接角色过滤：已注册为投屏的连接不接收标记更新，
+   从通道层面保证投屏不显示标记。
 
 ## WebSocket 协议（`/ws`）
 
@@ -150,6 +208,10 @@ npm install && npm run build && npm start
       "durationMs": 600000, "fixed": false } ] }            // 整体替换有序议程
 { "command": "agenda_current", "id": "a-1" } // 设定当前环节（载入其时长，回到待开始）
 { "command": "advance" }                      // 结束当前环节（提前/超时），按偏差进入下一环节
+
+// 现场标记（仅持有者；运行/暂停/超时/待开始均可记录）
+{ "command": "mark_add", "name": "发言切换" } // 1~30 字；记录瞬间固化时刻/归属/偏差
+{ "command": "mark_delete_latest" }           // 删除本场会话最近一条（seq 最大者）
 
 // 后台提示（投屏身份/改名/上报无需控制权；cue_send 仅持有者）
 { "command": "screen_register", "screenId": "s-<uuid>", "name": "主席台主屏" } // 投屏每次连接/重连注册
@@ -191,6 +253,17 @@ npm install && npm run build && npm start
     cue.status: pending（未送达）| displayed（已显示）| acknowledged（已确认）*/ ] }
 { "type": "cue", "epoch": "...", "cueSeq": 7, "cueType": "stage", "text": "请上场" } // 仅单播给目标屏
 { "type": "screen_conflict", "screenId": "s-...", "reason": "replaced" } // 同 ID 被新连接顶替
+
+// 现场标记（整体替换；连接首包下发一次，之后仅新增/删除时下发；已注册投屏的连接不收）
+{ "type": "markers", "epoch": "...", "sessionId": "m-...", "markers": [
+  { "seq": 1, "name": "发言切换",
+    "wallTime": "2026-09-21T01:23:45.678Z", // ISO8601 挂钟时间（人读/导出）
+    "sessionElapsedMs": 183000,             // 相对本场会话起点（单调时钟）
+    "phase": "running",                     // 记录瞬间计时状态 idle|running|paused|finished
+    "itemId": "a-1", "itemName": "开场致辞", "itemIndex": 0, // 归属环节快照；无当前环节时为 null
+    "itemElapsedMs": 45000,                 // 记录瞬间该环节已用时长（暂停冻结）；无环节为 null
+    "deviationMs": -2000 } ] }              // 记录瞬间相对计划偏差（顺延量+本环节超时量）
+// 错误码：BAD_MARK（名称为空或超 30 字）、MARK_LIMIT（本场超过 1000 条）、NO_MARK（空列表删除）
 // 错误码：BAD_SCREEN（屏幕 ID 非法）、BAD_CUE（类型/文案/目标非法）、
 //         BAD_TARGET（目标屏幕不存在）、NO_SCREEN（全发时无在线屏）、
 //         NOT_YOUR_SCREEN（替别的屏幕改名/确认）、NOT_SCREEN（未注册即改名）
@@ -205,16 +278,16 @@ npm install && npm run build && npm start
 ├── package.json             # npm workspaces 根清单
 ├── server/
 │   └── src/
-│       ├── index.js         # HTTP 静态服务 + WebSocket 状态机/租约 + 屏幕与后台提示
+│       ├── index.js         # HTTP 静态服务 + WebSocket 状态机/租约 + 屏幕与后台提示 + 现场标记
 │       └── agenda.js        # 议程偏差推演纯函数（顺延 / 固定点压缩 / 校验）
 └── client/
     ├── vite.config.js       # 开发代理 /ws -> localhost:3000
     └── src/
-        ├── useSocket.js     # 自动重连、版本防回滚（快照+提示）、心跳续租、屏幕注册
-        ├── time.js          # 单调时钟插值、议程时钟格式化
+        ├── useSocket.js     # 自动重连、版本防回滚（快照+提示）、心跳续租、屏幕注册、标记列表
+        ├── time.js          # 单调时钟插值、议程时钟格式化、挂钟时间/CSV 工具
         ├── guard.js         # 快照版本守卫 + 提示 cueSeq 守卫
         ├── screen.js        # 投屏持久屏幕 ID / 显示名（localStorage）
-        └── pages/           # ConsolePage / DisplayPage / HomePage / AgendaPanel / CuePanel
+        └── pages/           # ConsolePage / DisplayPage / HomePage / AgendaPanel / CuePanel / MarkerPanel
 ```
 
 ## 测试
@@ -224,6 +297,7 @@ npm test
 # guard.test.mjs   快照版本守卫 + 提示 cueSeq 守卫纯函数
 # agenda.test.mjs  议程偏差推演纯函数（提前/超时/固定点压缩）
 # cue.test.mjs     后台提示端到端（注册/三态/覆盖/旧确认丢弃/补发/群发/校验，自带独立实例）
+# marker.test.mjs  现场标记端到端（权限/校验/归属固化/暂停冻结/重连/advance/超时偏差/投屏不收，自带独立实例）
 # e2e.mjs          WebSocket 端到端冒烟（需先启动服务端，默认端口 3000，可用 PORT 覆盖）
 # lease.test.mjs   失联自动释放与接管（自带独立测试实例）
 ```
